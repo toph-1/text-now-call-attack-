@@ -1,137 +1,374 @@
 #!/bin/bash
-# simple_textnow_caller.sh - Simple working version
+# multi_caller.sh - Call the same number multiple times with *67
 
+# ==================== CONFIGURATION ====================
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Show header
-echo -e "${GREEN}================================${NC}"
-echo -e "${GREEN}TextNow Auto Caller with *67${NC}"
-echo -e "${GREEN}================================${NC}"
-echo ""
+# Default settings
+DEFAULT_CALLS=3           # Default number of calls
+DEFAULT_DELAY=30          # Seconds between calls
+LOG_FILE="calls_$(date +%Y%m%d_%H%M%S).log"
+# =======================================================
 
-# Function to clean phone numbers
+# Show banner
+show_banner() {
+    echo -e "${CYAN}"
+    cat << "EOF"
+╔══════════════════════════════════════════╗
+║     TextNow Multi-Call Tool             ║
+║     Call same number multiple times     ║
+║     Auto *67 - Caller ID Blocked        ║
+╚══════════════════════════════════════════╝
+EOF
+    echo -e "${NC}"
+}
+
+# Detect OS and set browser command
+detect_os() {
+    case "$(uname -s)" in
+        Darwin)
+            BROWSER_CMD="open"
+            ;;
+        Linux)
+            BROWSER_CMD="xdg-open"
+            ;;
+        CYGWIN*|MINGW*|MSYS*)
+            BROWSER_CMD="start"
+            ;;
+        *)
+            BROWSER_CMD="open"
+            ;;
+    esac
+    echo -e "${GREEN}✓ Using: $BROWSER_CMD${NC}"
+}
+
+# Clean phone number (remove non-digits, ensure 10 digits)
 clean_number() {
-    echo "$1" | tr -cd '0-9' | sed 's/^1//' | cut -c1-10
+    local number="$1"
+    # Remove all non-digits
+    local clean=$(echo "$number" | tr -cd '0-9')
+    
+    # Handle 11-digit numbers starting with 1
+    if [ ${#clean} -eq 11 ] && [ "${clean:0:1}" = "1" ]; then
+        echo "${clean:1}"
+    elif [ ${#clean} -eq 10 ]; then
+        echo "$clean"
+    else
+        echo "$clean"
+    fi
 }
 
-# Function to make call
+# Format number with *67
+format_with_star67() {
+    local number="$1"
+    local clean=$(clean_number "$number")
+    echo "*67${clean}"
+}
+
+# Make a single call
 make_call() {
-    local number=$1
-    local count=$2
+    local number="$1"
+    local call_number="$2"
+    local total_calls="$3"
     
-    # Add *67 to block caller ID
-    local star67_number="*67${number}"
+    local clean_num=$(clean_number "$number")
+    local star67_num=$(format_with_star67 "$number")
     
-    echo -e "${YELLOW}[$count] Calling $number with *67...${NC}"
+    echo -e "\n${YELLOW}┌─────────────────────────────────────────${NC}"
+    echo -e "${YELLOW}│ Call #$call_number of $total_calls${NC}"
+    echo -e "${YELLOW}│ Number: $clean_num${NC}"
+    echo -e "${YELLOW}│ Dialing: $star67_num${NC}"
+    echo -e "${YELLOW}│ Status: Caller ID BLOCKED (*67)${NC}"
+    echo -e "${YELLOW}└─────────────────────────────────────────${NC}"
     
-    # Try multiple methods to open the call
+    # Open in browser with *67
+    $BROWSER_CMD "https://www.textnow.com/call?phone=${star67_num}" 2>/dev/null
     
-    # Method 1: Open TextNow website with the number
-    open "https://www.textnow.com/call?phone=${star67_number}" 2>/dev/null
+    # Also try direct tel link (works on phones)
+    $BROWSER_CMD "tel:${star67_num}" 2>/dev/null
     
-    # Method 2: Also try direct tel link
-    open "tel:${star67_number}" 2>/dev/null
+    # Log the call
+    log_call "$clean_num" "$star67_num" "$call_number"
     
-    echo -e "${GREEN}✓ Opened in browser - Click the call button${NC}"
-    echo -e "${BLUE}  ↳ Your number is BLOCKED (*67)${NC}"
-    echo ""
+    echo -e "${GREEN}✓ Call #$call_number initiated${NC}"
+    echo -e "${BLUE}  ↳ Browser tab opened - Click the call button${NC}"
 }
 
-# Check if file was provided
-if [ "$1" = "" ]; then
-    echo -e "${RED}ERROR: No file specified!${NC}"
-    echo ""
-    echo "Usage:"
-    echo "  ./simple_textnow_caller.sh numbers.txt"
-    echo ""
-    echo "Or create a file first:"
-    echo "  echo \"5551234567\" > numbers.txt"
-    echo "  echo \"5559876543\" >> numbers.txt"
-    echo "  ./simple_textnow_caller.sh numbers.txt"
-    echo ""
-    exit 1
-fi
-
-# Check if file exists
-if [ ! -f "$1" ]; then
-    echo -e "${RED}ERROR: File '$1' not found!${NC}"
-    echo ""
-    echo "Current directory: $(pwd)"
-    echo "Files in this directory:"
-    ls -la
-    echo ""
-    echo "Create a file called numbers.txt with your numbers:"
-    echo "  echo \"5551234567\" > numbers.txt"
-    echo "  echo \"5559876543\" >> numbers.txt"
-    echo ""
-    exit 1
-fi
-
-# Read the file
-echo -e "${GREEN}Reading numbers from: $1${NC}"
-echo ""
-
-# Show the contents of the file
-echo -e "${BLUE}File contents:${NC}"
-cat "$1"
-echo ""
-
-# Extract numbers
-numbers=$(grep -oE '[0-9]{10}' "$1" | sort -u)
-
-if [ -z "$numbers" ]; then
-    echo -e "${RED}No valid 10-digit numbers found in file!${NC}"
-    echo ""
-    echo "Make sure your file has numbers like:"
-    echo "  5551234567"
-    echo "  555-987-6543"
-    echo "  (555) 555-5555"
-    exit 1
-fi
-
-# Count numbers
-count=$(echo "$numbers" | wc -l | tr -d ' ')
-echo -e "${GREEN}Found $count valid number(s):${NC}"
-echo "$numbers" | while read num; do
-    echo "  ✓ $num"
-done
-echo ""
-
-# Confirm
-read -p "Start calling these $count numbers? (y/n): " confirm
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    echo "Cancelled."
-    exit 0
-fi
-
-echo ""
-echo -e "${GREEN}Starting calls...${NC}"
-echo ""
-
-# Make the calls
-call_number=1
-echo "$numbers" | while read number; do
-    make_call "$number" "$call_number"
+# Log call details
+log_call() {
+    local number="$1"
+    local dialed="$2"
+    local call_num="$3"
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
     
-    # Wait between calls
-    if [ $call_number -lt $count ]; then
-        echo -e "${BLUE}Waiting 15 seconds before next call...${NC}"
-        sleep 15
-        echo ""
+    echo "$timestamp | Call #$call_num | $number | $dialed (BLOCKED)" >> "$LOG_FILE"
+}
+
+# Generate report
+generate_report() {
+    echo -e "\n${GREEN}══════════════════════════════════════════${NC}"
+    echo -e "${GREEN}              CALL REPORT${NC}"
+    echo -e "${GREEN}══════════════════════════════════════════${NC}"
+    
+    if [ -f "$LOG_FILE" ]; then
+        echo -e "${CYAN}Total calls made: $(wc -l < "$LOG_FILE")${NC}"
+        echo -e "${CYAN}Log file: $LOG_FILE${NC}"
+        echo -e "\n${YELLOW}Call Details:${NC}"
+        echo -e "${BLUE}─────────────────────────────────────────${NC}"
+        cat "$LOG_FILE"
+        echo -e "${BLUE}─────────────────────────────────────────${NC}"
     fi
     
-    ((call_number++))
-done
+    echo -e "\n${GREEN}✓ All calls made with *67 (Caller ID Blocked)${NC}"
+    echo -e "${YELLOW}⚠️  Recipients will see \"Unknown\" or \"Blocked\"${NC}"
+}
 
-echo -e "${GREEN}================================${NC}"
-echo -e "${GREEN}All calls initiated!${NC}"
-echo -e "${GREEN}================================${NC}"
-echo ""
-echo "✅ Each call was made with *67 (Caller ID Blocked)"
-echo "📱 Browser tabs should open for each number"
-echo "🔘 Click the call button in each tab to start the call"
+# Countdown timer
+countdown() {
+    local seconds=$1
+    echo -ne "${BLUE}Next call in: ${NC}"
+    for ((i=seconds; i>0; i--)); do
+        echo -ne "${YELLOW}$i${NC} seconds... \r"
+        sleep 1
+    done
+    echo -e "${GREEN}Now!${NC}     "
+}
+
+# Main multi-call function
+multi_call() {
+    local number="$1"
+    local num_calls="$2"
+    local delay="$3"
+    local random_delay="$4"
+    
+    local clean_num=$(clean_number "$number")
+    
+    # Validate number
+    if [ ${#clean_num} -ne 10 ]; then
+        echo -e "${RED}Error: Invalid phone number${NC}"
+        echo -e "Please enter a valid 10-digit US number (e.g., 5551234567)"
+        echo -e "You entered: $number (cleaned to: $clean_num, length: ${#clean_num})"
+        exit 1
+    fi
+    
+    echo -e "\n${GREEN}══════════════════════════════════════════${NC}"
+    echo -e "${GREEN}              CALL SETUP${NC}"
+    echo -e "${GREEN}══════════════════════════════════════════${NC}"
+    echo -e "${CYAN}Target Number: ${GREEN}$clean_num${NC}"
+    echo -e "${CYAN}Total Calls:   ${GREEN}$num_calls${NC}"
+    echo -e "${CYAN}Delay Between: ${GREEN}$delay seconds${NC}"
+    if [ "$random_delay" = true ]; then
+        echo -e "${CYAN}Delay Type:    ${GREEN}Random (${RANDOM_MIN}-${RANDOM_MAX} seconds)${NC}"
+    fi
+    echo -e "${CYAN}Caller ID:     ${YELLOW}BLOCKED (*67)${NC}"
+    echo -e "${CYAN}Log File:      ${GREEN}$LOG_FILE${NC}"
+    echo -e "\n${YELLOW}⚠️  IMPORTANT: You must be logged into TextNow in your browser!${NC}"
+    echo -e "${YELLOW}⚠️  Each call will open a new tab - click the call button in each tab${NC}"
+    echo ""
+    
+    # Final confirmation
+    read -p "Start making $num_calls calls to $clean_num? (y/n): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+    
+    echo -e "\n${GREEN}Starting calls...${NC}\n"
+    
+    # Make the calls
+    for i in $(seq 1 $num_calls); do
+        make_call "$number" "$i" "$num_calls"
+        
+        # Wait between calls (except after last)
+        if [ $i -lt $num_calls ]; then
+            if [ "$random_delay" = true ]; then
+                # Random delay between RANDOM_MIN and RANDOM_MAX
+                random_delay_seconds=$((RANDOM_MIN + RANDOM % (RANDOM_MAX - RANDOM_MIN + 1)))
+                echo -e "\n${BLUE}Random delay: ${random_delay_seconds} seconds${NC}"
+                countdown $random_delay_seconds
+            else
+                countdown $delay
+            fi
+        fi
+    done
+    
+    generate_report
+}
+
+# Interactive mode
+interactive_mode() {
+    echo -e "\n${CYAN}Interactive Mode${NC}"
+    echo -e "${YELLOW}Enter the phone number you want to call multiple times${NC}"
+    read -p "Phone number (e.g., 5551234567): " number
+    
+    if [ -z "$number" ]; then
+        echo -e "${RED}No number entered. Exiting.${NC}"
+        exit 1
+    fi
+    
+    echo ""
+    read -p "How many times to call? (default: $DEFAULT_CALLS): " num_calls
+    num_calls=${num_calls:-$DEFAULT_CALLS}
+    
+    echo ""
+    read -p "Delay between calls in seconds? (default: $DEFAULT_DELAY): " delay
+    delay=${delay:-$DEFAULT_DELAY}
+    
+    echo ""
+    read -p "Use random delays? (y/n): " random_choice
+    if [[ "$random_choice" =~ ^[Yy]$ ]]; then
+        random_delay=true
+        echo ""
+        read -p "Random delay range (min max, e.g., 20 45): " range
+        if [ -n "$range" ]; then
+            RANDOM_MIN=$(echo $range | cut -d' ' -f1)
+            RANDOM_MAX=$(echo $range | cut -d' ' -f2)
+        else
+            RANDOM_MIN=20
+            RANDOM_MAX=45
+        fi
+    else
+        random_delay=false
+    fi
+    
+    multi_call "$number" "$num_calls" "$delay" "$random_delay"
+}
+
+# Show help
+show_help() {
+    show_banner
+    cat << EOF
+${GREEN}USAGE:${NC}
+    $0 [OPTIONS] PHONE_NUMBER
+
+${GREEN}DESCRIPTION:${NC}
+    Call the same phone number multiple times with *67 (caller ID blocked)
+    Each call opens in a new browser tab - you click the call button
+
+${GREEN}OPTIONS:${NC}
+    -c, --calls NUM      Number of times to call (default: 3)
+    -d, --delay SECONDS  Delay between calls in seconds (default: 30)
+    -r, --random         Use random delays (default range: 20-45 seconds)
+    --min SECONDS        Minimum random delay (with -r, default: 20)
+    --max SECONDS        Maximum random delay (with -r, default: 45)
+    -i, --interactive    Interactive mode (asks for number, calls, delay)
+    -h, --help          Show this help message
+
+${GREEN}EXAMPLES:${NC}
+    # Call 5551234567 three times with 30 second delay
+    $0 5551234567
+    
+    # Call 5551234567 five times with 10 second delay
+    $0 -c 5 -d 10 5551234567
+    
+    # Call with random delays between 15-60 seconds
+    $0 -r --min 15 --max 60 5551234567
+    
+    # Interactive mode
+    $0 --interactive
+
+${GREEN}FEATURES:${NC}
+    ✓ Auto *67 - Your caller ID is BLOCKED on every call
+    ✓ Multiple calls to same number
+    ✓ Adjustable delay between calls
+    ✓ Random delay option to avoid detection
+    ✓ Call logging with timestamps
+    ✓ Opens TextNow web interface automatically
+
+${GREEN}NOTE:${NC}
+    You must be logged into TextNow in your browser
+    Each call opens a new tab - click the call button manually
+    *67 blocks your caller ID (recipient sees "Unknown" or "Blocked")
+
+EOF
+}
+
+# Parse arguments
+main() {
+    show_banner
+    detect_os
+    
+    local number=""
+    local num_calls=$DEFAULT_CALLS
+    local delay=$DEFAULT_DELAY
+    local random_delay=false
+    local interactive=false
+    RANDOM_MIN=20
+    RANDOM_MAX=45
+    
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -c|--calls)
+                num_calls="$2"
+                shift 2
+                ;;
+            -d|--delay)
+                delay="$2"
+                shift 2
+                ;;
+            -r|--random)
+                random_delay=true
+                shift
+                ;;
+            --min)
+                RANDOM_MIN="$2"
+                shift 2
+                ;;
+            --max)
+                RANDOM_MAX="$2"
+                shift 2
+                ;;
+            -i|--interactive)
+                interactive=true
+                shift
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                number="$1"
+                shift
+                ;;
+        esac
+    done
+    
+    # Interactive mode
+    if [ "$interactive" = true ]; then
+        interactive_mode
+        exit 0
+    fi
+    
+    # Check if number was provided
+    if [ -z "$number" ]; then
+        echo -e "${RED}Error: No phone number provided!${NC}"
+        echo ""
+        show_help
+        exit 1
+    fi
+    
+    # Validate number of calls
+    if ! [[ "$num_calls" =~ ^[0-9]+$ ]] || [ "$num_calls" -lt 1 ]; then
+        echo -e "${RED}Error: Number of calls must be a positive integer${NC}"
+        exit 1
+    fi
+    
+    # Validate delay
+    if ! [[ "$delay" =~ ^[0-9]+$ ]] || [ "$delay" -lt 1 ]; then
+        echo -e "${RED}Error: Delay must be a positive integer${NC}"
+        exit 1
+    fi
+    
+    # Make the calls
+    multi_call "$number" "$num_calls" "$delay" "$random_delay"
+}
+
+# Run main function
+main "$@"
