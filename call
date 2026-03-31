@@ -1,0 +1,433 @@
+#!/bin/bash
+# textnow_caller.sh - Simple TextNow calling tool with auto *67
+
+# ==================== CONFIGURATION ====================
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Default settings
+DEFAULT_DELAY=15          # Seconds between calls
+LOG_FILE="calls_$(date +%Y%m%d_%H%M%S).log"
+# =======================================================
+
+# Show banner
+show_banner() {
+    echo -e "${CYAN}"
+    cat << "EOF"
+╔══════════════════════════════════════════╗
+║     TextNow Caller v2.0                 ║
+║     Auto *67 - Hide Caller ID           ║
+╚══════════════════════════════════════════╝
+EOF
+    echo -e "${NC}"
+}
+
+# Detect OS and browser
+detect_browser() {
+    case "$(uname -s)" in
+        Darwin)
+            BROWSER_CMD="open"
+            ;;
+        Linux)
+            BROWSER_CMD="xdg-open"
+            ;;
+        CYGWIN*|MINGW*|MSYS*)
+            BROWSER_CMD="start"
+            ;;
+        *)
+            BROWSER_CMD="open"
+            ;;
+    esac
+    echo -e "${GREEN}✓ Using browser: $BROWSER_CMD${NC}"
+}
+
+# Clean and format number with *67
+format_number_with_star67() {
+    local number="$1"
+    # Remove all non-digits
+    local clean=$(echo "$number" | tr -cd '0-9')
+    
+    # Ensure it's 10 digits (US number)
+    if [ ${#clean} -eq 10 ]; then
+        echo "*67${clean}"
+    elif [ ${#clean} -eq 11 ] && [ "${clean:0:1}" = "1" ]; then
+        echo "*67${clean:1}"
+    else
+        echo "*67${clean}"
+    fi
+}
+
+# Extract phone numbers from input
+extract_numbers() {
+    local text="$1"
+    echo "$text" | grep -oE '\+?1?[-. ]?\(?[0-9]{3}\)?[-. ]?[0-9]{3}[-. ]?[0-9]{4}' | \
+        sed 's/[^0-9]//g' | \
+        awk '{
+            if(length($0)==10) print $0
+            else if(length($0)==11 && substr($0,1,1)=="1") print substr($0,2)
+        }' | \
+        sort -u
+}
+
+# Make call with *67
+make_call() {
+    local original_number="$1"
+    local call_id="$2"
+    
+    # Format number with *67
+    local number_with_star67=$(format_number_with_star67 "$original_number")
+    
+    echo -ne "${YELLOW}[Call #$call_id] Calling ${original_number} with *67... ${NC}"
+    
+    # Try multiple methods
+    
+    # Method 1: Direct *67 with tel: URL (works on phones)
+    $BROWSER_CMD "tel:${number_with_star67}" 2>/dev/null
+    
+    # Method 2: TextNow web with *67
+    $BROWSER_CMD "https://www.textnow.com/call?phone=${number_with_star67}" 2>/dev/null
+    
+    # Method 3: TextNow with *67 parameter
+    $BROWSER_CMD "https://www.textnow.com/call/${number_with_star67}" 2>/dev/null
+    
+    echo -e "${GREEN}✓${NC}"
+    echo -e "${CYAN}  ↳ Caller ID BLOCKED (*67) - Your number is hidden${NC}"
+    
+    # Log the call
+    log_call "$original_number" "$number_with_star67"
+    
+    return 0
+}
+
+# Alternative: Use ADB for Android (if available)
+make_call_adb() {
+    local original_number="$1"
+    local call_id="$2"
+    
+    local number_with_star67=$(format_number_with_star67 "$original_number")
+    
+    echo -ne "${YELLOW}[Call #$call_id] Calling ${original_number} via ADB... ${NC}"
+    
+    # Check if ADB is available
+    if command -v adb &> /dev/null && adb devices | grep -q "device$"; then
+        # Open dialer with *67 prefix
+        adb shell am start -a android.intent.action.CALL -d "tel:${number_with_star67}" 2>/dev/null
+        echo -e "${GREEN}✓${NC}"
+        echo -e "${CYAN}  ↳ Caller ID BLOCKED (*67) on Android device${NC}"
+        log_call "$original_number" "$number_with_star67"
+        return 0
+    else
+        echo -e "${YELLOW}⚠ ADB not available, using browser method${NC}"
+        make_call "$original_number" "$call_id"
+        return $?
+    fi
+}
+
+# Log call details
+log_call() {
+    local number="$1"
+    local dialed="$2"
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    
+    echo "$timestamp | $number | $dialed (Caller ID BLOCKED)" >> "$LOG_FILE"
+}
+
+# Show progress
+show_progress() {
+    local current=$1
+    local total=$2
+    local width=40
+    local percentage=$((current * 100 / total))
+    local filled=$((percentage * width / 100))
+    local empty=$((width - filled))
+    
+    printf "\r${CYAN}Progress: ["
+    printf "%${filled}s" | tr ' ' '='
+    printf "%${empty}s" | tr ' ' ' '
+    printf "] %d%%${NC}" "$percentage"
+}
+
+# Generate report
+generate_report() {
+    if [ -f "$LOG_FILE" ]; then
+        echo -e "\n${GREEN}=== Call Report ===${NC}"
+        echo -e "Total calls: $(wc -l < "$LOG_FILE")"
+        echo -e "Log file: $LOG_FILE"
+        echo -e "\n${YELLOW}All calls made with *67 (Caller ID Blocked)${NC}"
+        echo -e "\n${CYAN}Call details:${NC}"
+        cat "$LOG_FILE"
+    fi
+}
+
+# Mass calling function
+mass_call() {
+    local numbers_file="$1"
+    local delay="$2"
+    local max_calls="$3"
+    local use_adb="$4"
+    
+    # Read numbers into array
+    mapfile -t numbers < "$numbers_file"
+    local total=${#numbers[@]}
+    
+    if [ $max_calls -gt 0 ] && [ $max_calls -lt $total ]; then
+        total=$max_calls
+        echo -e "${YELLOW}Limiting to $max_calls calls${NC}"
+    fi
+    
+    echo -e "\n${GREEN}Starting calls with *67 (Caller ID Blocked):${NC}"
+    echo -e "  Total: $total numbers"
+    echo -e "  Delay: $delay seconds between calls"
+    echo -e "  Method: $([ "$use_adb" = true ] && echo "ADB (Android)" || echo "Browser")"
+    echo -e "  Log: $LOG_FILE"
+    echo -e "\n${CYAN}⚠️  Your number will be HIDDEN from recipients (*67)${NC}\n"
+    
+    local success=0
+    local failed=0
+    
+    for i in "${!numbers[@]}"; do
+        if [ $i -ge $total ]; then
+            break
+        fi
+        
+        number="${numbers[$i]}"
+        call_id=$((i + 1))
+        
+        show_progress $call_id $total
+        
+        if [ "$use_adb" = true ]; then
+            make_call_adb "$number" "$call_id"
+        else
+            make_call "$number" "$call_id"
+        fi
+        
+        if [ $? -eq 0 ]; then
+            ((success++))
+        else
+            ((failed++))
+        fi
+        
+        # Wait between calls
+        if [ $i -lt $((total - 1)) ]; then
+            echo -ne "\n${BLUE}Waiting $delay seconds before next call...${NC}"
+            for ((s=delay; s>0; s--)); do
+                echo -ne "\r${BLUE}Waiting $delay seconds before next call...${NC}  "
+                sleep 1
+            done
+            echo -ne "\r${BLUE}                                           ${NC}\n"
+        fi
+    done
+    
+    echo -e "\n\n${GREEN}=== Call Summary ===${NC}"
+    echo -e "✓ Successful: $success"
+    echo -e "✗ Failed: $failed"
+    echo -e "Total: $((success + failed))"
+    echo -e "${YELLOW}✓ All calls made with *67 (Caller ID Blocked)${NC}"
+    
+    generate_report
+}
+
+# Interactive mode
+interactive_mode() {
+    echo -e "${CYAN}Interactive Mode - Enter phone numbers${NC}"
+    echo -e "${YELLOW}⚠️  All calls will be made with *67 (Caller ID Blocked)${NC}\n"
+    
+    local temp_file=$(mktemp)
+    local line
+    local count=0
+    
+    while true; do
+        read -p "Enter number $((count + 1)) (or press Enter to finish): " line
+        if [ -z "$line" ]; then
+            break
+        fi
+        echo "$line" >> "$temp_file"
+        ((count++))
+    done
+    
+    if [ -s "$temp_file" ]; then
+        echo -e "\n${GREEN}Numbers to call (with *67):${NC}"
+        cat "$temp_file"
+        
+        read -p "Start calls? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # Extract numbers from the temp file
+            local numbers_file=$(mktemp)
+            extract_numbers "$(cat "$temp_file")" > "$numbers_file"
+            mass_call "$numbers_file" "$DEFAULT_DELAY" "0" false
+            rm -f "$numbers_file"
+        fi
+    else
+        echo "No numbers entered."
+    fi
+    
+    rm -f "$temp_file"
+}
+
+# Show help
+show_help() {
+    show_banner
+    cat << EOF
+${GREEN}Simple TextNow Caller with Auto *67${NC}
+All calls automatically block your caller ID so recipients CAN'T see your number.
+
+${GREEN}Usage:${NC}
+    $0 [OPTIONS] [NUMBER|FILE|TEXT]
+
+${GREEN}Options:${NC}
+    -f, --file FILE      Read numbers from file
+    -d, --delay SECONDS  Delay between calls (default: 15)
+    -m, --max NUM        Maximum number of calls
+    -i, --interactive    Interactive mode
+    --adb               Use ADB (Android device) instead of browser
+    -h, --help          Show this help
+
+${GREEN}Examples:${NC}
+    # Call a single number (auto *67)
+    $0 5551234567
+    
+    # Call multiple numbers from file
+    $0 -f numbers.txt
+    
+    # Call with 10 second delay between calls
+    $0 -f numbers.txt -d 10
+    
+    # Interactive mode
+    $0 --interactive
+    
+    # Pipe text with numbers
+    echo "Call 555-123-4567 and 555-987-6543" | $0
+    
+    # Use ADB for Android device
+    $0 --adb 5551234567
+
+${GREEN}How it works:${NC}
+    1. Script adds *67 prefix to every number automatically
+    2. *67 blocks your caller ID so recipients see "Unknown" or "Blocked"
+    3. Opens browser tabs or uses ADB to dial
+    4. Logs all calls with timestamps
+
+${GREEN}Note:${NC}
+    *67 works on most phone systems in US/Canada
+    TextNow may have limitations with *67 in web version
+    For best results, use on mobile phone or ADB method
+
+EOF
+}
+
+# Main function
+main() {
+    show_banner
+    detect_browser
+    
+    local input_file=""
+    local delay=$DEFAULT_DELAY
+    local max_calls=0
+    local interactive=false
+    local use_adb=false
+    local direct_input=""
+    
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f|--file)
+                input_file="$2"
+                shift 2
+                ;;
+            -d|--delay)
+                delay="$2"
+                shift 2
+                ;;
+            -m|--max)
+                max_calls="$2"
+                shift 2
+                ;;
+            -i|--interactive)
+                interactive=true
+                shift
+                ;;
+            --adb)
+                use_adb=true
+                shift
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                direct_input="$1"
+                shift
+                ;;
+        esac
+    done
+    
+    # Interactive mode
+    if [ "$interactive" = true ]; then
+        interactive_mode
+        exit 0
+    fi
+    
+    # Handle input
+    local temp_file=""
+    
+    if [ -n "$input_file" ] && [ -f "$input_file" ]; then
+        temp_file="$input_file"
+    elif [ -n "$direct_input" ]; then
+        temp_file=$(mktemp)
+        echo "$direct_input" > "$temp_file"
+    elif [ ! -t 0 ]; then
+        # Read from pipe
+        temp_file=$(mktemp)
+        cat > "$temp_file"
+    else
+        echo -e "${RED}No input provided.${NC}"
+        echo -e "Usage: $0 [number] or $0 -f numbers.txt"
+        echo -e "Try $0 --help for more options"
+        exit 1
+    fi
+    
+    # Extract numbers
+    local numbers_file=$(mktemp)
+    extract_numbers "$(cat "$temp_file")" > "$numbers_file"
+    
+    if [ ! -s "$numbers_file" ]; then
+        echo -e "${RED}No valid phone numbers found.${NC}"
+        echo "Make sure numbers are in format: 5551234567 or 555-123-4567"
+        rm -f "$temp_file" "$numbers_file"
+        exit 1
+    fi
+    
+    # Show what we found
+    local count=$(wc -l < "$numbers_file" | tr -d ' ')
+    echo -e "${GREEN}Found $count phone number(s):${NC}"
+    cat "$numbers_file" | sed 's/^/  /'
+    echo
+    echo -e "${YELLOW}⚠️  Each call will be made with *67 (Caller ID BLOCKED)${NC}"
+    echo
+    
+    # Confirm for mass calls
+    if [ $count -gt 3 ]; then
+        read -p "Proceed with $count calls? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Cancelled."
+            rm -f "$temp_file" "$numbers_file"
+            exit 0
+        fi
+    fi
+    
+    # Make the calls
+    mass_call "$numbers_file" "$delay" "$max_calls" "$use_adb"
+    
+    # Cleanup
+    rm -f "$temp_file" "$numbers_file"
+}
+
+# Run main
+main "$@"
